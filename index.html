@@ -439,6 +439,43 @@
     display: flex; align-items: center; justify-content: center;
     padding: 0 3px; line-height: 1;
   }
+
+  /* ---------- sync card ---------- */
+  .sync-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow);
+    padding: 12px 16px; margin-top: 14px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  }
+  .sync-row { display: flex; align-items: center; gap: 8px; }
+  .sync-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .sync-dot.off { background: var(--text-muted); opacity: 0.5; }
+  .sync-dot.on { background: var(--done); }
+  .sync-label { font-size: 13px; color: var(--text-muted); }
+  .sync-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .sync-join { display: flex; gap: 6px; }
+  .sync-input {
+    font-family: var(--font-mono); font-size: 13px; text-transform: uppercase;
+    letter-spacing: 0.06em; width: 150px;
+    padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text);
+  }
+  .sync-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .sync-btn {
+    font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+    padding: 7px 12px; border-radius: 8px;
+    border: 1px solid var(--accent); background: var(--surface); color: var(--accent);
+    cursor: pointer; white-space: nowrap;
+  }
+  .sync-btn:hover { background: var(--surface-2); }
+  .sync-btn.subtle { border-color: var(--border-strong); color: var(--text-muted); }
+  .sync-connected { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .sync-code-box {
+    font-family: var(--font-mono); font-size: 15px; font-weight: 700;
+    letter-spacing: 0.1em; color: var(--accent-strong);
+    background: var(--surface-2); border-radius: 8px; padding: 6px 12px;
+  }
+  .sync-time { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 </style>
 
 <div class="wrap">
@@ -457,6 +494,26 @@
       <div class="stub-title" id="todayDateLabel">—</div>
       <div class="stub-meta" id="dayOfPlanLabel">—</div>
       <div class="phase-pill" id="phasePill">—</div>
+    </div>
+  </div>
+
+  <div class="sync-card" id="syncCard">
+    <div class="sync-row">
+      <span class="sync-dot off" id="syncDot"></span>
+      <span class="sync-label" id="syncLabel">この端末だけに保存中</span>
+    </div>
+    <div class="sync-controls" id="syncControls">
+      <button type="button" class="sync-btn" id="syncStartBtn">同期を始める（この端末を1台目にする）</button>
+      <div class="sync-join">
+        <input type="text" class="sync-input" id="syncInput" placeholder="他の端末の同期コード" maxlength="8">
+        <button type="button" class="sync-btn" id="syncJoinBtn">接続</button>
+      </div>
+    </div>
+    <div class="sync-connected" id="syncConnected" style="display:none;">
+      <span class="sync-code-box" id="syncCodeBox"></span>
+      <button type="button" class="sync-btn" id="syncCopyCodeBtn">コードをコピー</button>
+      <span class="sync-time" id="syncTime"></span>
+      <button type="button" class="sync-btn subtle" id="syncDisconnectBtn">同期を解除</button>
     </div>
   </div>
 
@@ -612,6 +669,7 @@
   }
   function saveProgress(p) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); } catch (e) {}
+    schedulePush();
   }
 
   var DATA_KEY = 'eiken-pre1-writing-data-v2';
@@ -628,6 +686,7 @@
   }
   function saveData(d) {
     try { localStorage.setItem(DATA_KEY, JSON.stringify(d)); } catch (e) {}
+    schedulePush();
   }
   function emptyScores() { return { content: null, structure: null, vocab: null, grammar: null }; }
   function getDay(day) {
@@ -690,6 +749,118 @@
     ta.select();
     try { document.execCommand('copy'); } catch (e) {}
     document.body.removeChild(ta);
+  }
+
+  var SUPABASE_URL = 'https://bggwfdctijbdnihdfqhb.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_xqsFshtehk9nAkqaokOJhg_sGCLJaf9';
+  var SYNC_CODE_KEY = 'eiken-pre1-sync-code';
+  var syncCode = null;
+  try { syncCode = localStorage.getItem(SYNC_CODE_KEY); } catch (e) {}
+  var syncPushTimer = null;
+  var lastSyncedAt = null;
+
+  function genSyncCode() {
+    var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    var s = '';
+    for (var i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    return s;
+  }
+  function supaHeaders(extra) {
+    var h = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' };
+    if (extra) { for (var k in extra) h[k] = extra[k]; }
+    return h;
+  }
+  function syncPush() {
+    if (!syncCode || !window.fetch) return;
+    fetch(SUPABASE_URL + '/rest/v1/writing_sync?on_conflict=sync_code', {
+      method: 'POST',
+      headers: supaHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify({ sync_code: syncCode, payload: { progress: progress, data: data } })
+    }).then(function (r) {
+      if (r.ok) { lastSyncedAt = new Date(); updateSyncUI(); }
+    }).catch(function () {});
+  }
+  function schedulePush() {
+    if (!syncCode) return;
+    if (syncPushTimer) clearTimeout(syncPushTimer);
+    syncPushTimer = setTimeout(syncPush, 600);
+  }
+  function syncPull(code, cb) {
+    if (!window.fetch) { cb(new Error('no_fetch')); return; }
+    fetch(SUPABASE_URL + '/rest/v1/writing_sync?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at', {
+      headers: supaHeaders()
+    }).then(function (r) { return r.json(); })
+      .then(function (rows) {
+        if (rows && rows[0]) cb(null, rows[0]); else cb(new Error('not_found'));
+      }).catch(function (e) { cb(e); });
+  }
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+  function fmtTimeShort(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+  function updateSyncUI(state) {
+    var dot = document.getElementById('syncDot');
+    var label = document.getElementById('syncLabel');
+    var controls = document.getElementById('syncControls');
+    var connected = document.getElementById('syncConnected');
+    if (!dot) return;
+    if (syncCode) {
+      controls.style.display = 'none';
+      connected.style.display = '';
+      document.getElementById('syncCodeBox').textContent = syncCode;
+      dot.className = 'sync-dot on';
+      label.textContent = state === 'syncing' ? '同期中…' : '同期あり';
+      document.getElementById('syncTime').textContent = lastSyncedAt ? ('最終同期 ' + fmtTimeShort(lastSyncedAt)) : '';
+    } else {
+      controls.style.display = '';
+      connected.style.display = 'none';
+      dot.className = 'sync-dot off';
+      label.textContent = 'この端末だけに保存中';
+    }
+  }
+  function setupSyncUI() {
+    var startBtn = document.getElementById('syncStartBtn');
+    var joinBtn = document.getElementById('syncJoinBtn');
+    var input = document.getElementById('syncInput');
+    var copyBtn = document.getElementById('syncCopyCodeBtn');
+    var disconnectBtn = document.getElementById('syncDisconnectBtn');
+    if (!startBtn) return;
+    startBtn.addEventListener('click', function () {
+      syncCode = genSyncCode();
+      try { localStorage.setItem(SYNC_CODE_KEY, syncCode); } catch (e) {}
+      updateSyncUI('syncing');
+      syncPush();
+    });
+    joinBtn.addEventListener('click', function () {
+      var code = (input.value || '').trim().toUpperCase();
+      if (!code) return;
+      joinBtn.disabled = true;
+      joinBtn.textContent = '接続中…';
+      syncPull(code, function (err, row) {
+        joinBtn.disabled = false;
+        joinBtn.textContent = '接続';
+        if (err) {
+          input.style.borderColor = 'var(--today)';
+          setTimeout(function () { input.style.borderColor = ''; }, 1500);
+          return;
+        }
+        syncCode = code;
+        try { localStorage.setItem(SYNC_CODE_KEY, syncCode); } catch (e) {}
+        if (row.payload) {
+          if (row.payload.progress) progress = row.payload.progress;
+          if (row.payload.data) data = row.payload.data;
+          saveProgress(progress);
+          saveData(data);
+        }
+        lastSyncedAt = new Date();
+        input.value = '';
+        render();
+      });
+    });
+    copyBtn.addEventListener('click', function () { copyText(syncCode, copyBtn); });
+    disconnectBtn.addEventListener('click', function () {
+      syncCode = null;
+      try { localStorage.removeItem(SYNC_CODE_KEY); } catch (e) {}
+      updateSyncUI();
+    });
   }
 
   var plan = buildPlan();
@@ -1206,6 +1377,27 @@
     }
   });
 
-  render();
+  setupSyncUI();
+  updateSyncUI();
+
+  function boot() {
+    if (syncCode) {
+      updateSyncUI('syncing');
+      syncPull(syncCode, function (err, row) {
+        if (!err && row && row.payload) {
+          if (row.payload.progress) progress = row.payload.progress;
+          if (row.payload.data) data = row.payload.data;
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)); } catch (e) {}
+          try { localStorage.setItem(DATA_KEY, JSON.stringify(data)); } catch (e) {}
+        }
+        lastSyncedAt = new Date();
+        render();
+        updateSyncUI();
+      });
+    } else {
+      render();
+    }
+  }
+  boot();
 })();
 </script>
