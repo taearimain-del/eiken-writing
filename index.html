@@ -212,6 +212,36 @@
     color: var(--text);
   }
 
+  .field-label {
+    display: block;
+    font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .topic-edit { margin-bottom: 4px; }
+  input.topic-input, input.point-input, textarea.source-input {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+  input.topic-input { font-family: var(--font-display); font-size: 17px; margin-bottom: 10px; }
+  .points-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
+  input.point-input { font-size: 13.5px; }
+  input.topic-input:focus, input.point-input:focus, textarea.source-input:focus {
+    outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent;
+  }
+  textarea.source-input { min-height: 110px; resize: vertical; font-size: 14.5px; margin-top: 4px; }
+  @media (max-width: 480px) {
+    .points-edit-grid { grid-template-columns: 1fr; }
+  }
+
   .prompt-box {
     margin-top: 10px;
     background: var(--surface-2);
@@ -703,7 +733,9 @@
       data[day] = {
         essayText: '', summaryText: '',
         essayScores: emptyScores(), summaryScores: emptyScores(),
-        essayNotes: '', summaryNotes: '', updatedAt: null
+        essayNotes: '', summaryNotes: '', updatedAt: null,
+        essayTopicEn: '', essayTopicPoints: ['', '', '', ''],
+        summarySource: ''
       };
     }
     var d = data[day];
@@ -713,6 +745,10 @@
     if (typeof d.summaryText !== 'string') d.summaryText = '';
     if (typeof d.essayNotes !== 'string') d.essayNotes = '';
     if (typeof d.summaryNotes !== 'string') d.summaryNotes = '';
+    if (typeof d.essayTopicEn !== 'string') d.essayTopicEn = '';
+    if (!Array.isArray(d.essayTopicPoints)) d.essayTopicPoints = ['', '', '', ''];
+    for (var pi = 0; pi < 4; pi++) { if (typeof d.essayTopicPoints[pi] !== 'string') d.essayTopicPoints[pi] = ''; }
+    if (typeof d.summarySource !== 'string') d.summarySource = '';
     return d;
   }
   function scoreSum(scores) {
@@ -987,15 +1023,19 @@
     return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
   }
 
-  function buildGradingPrompt(kind, entry, body) {
+  function buildGradingPrompt(kind, ctx, body) {
     if (kind === 'essay') {
       return '以下は英検準1級ライティング「意見論述」の解答です。\n' +
-        'TOPIC: ' + entry.topic.en + '\n' +
+        'TOPIC: ' + (ctx.topicEn || '(未入力)') + '\n' +
+        (ctx.points && ctx.points.length ? 'POINTS: ' + ctx.points.join(' / ') + '\n' : '') +
         'この英作文を英検準1級の採点基準（内容・構成・語彙・文法の4観点、各4点＝16点満点）で採点してください。' +
         '各観点の点数、具体的な改善点トップ3、そして自然な修正例も教えてください。\n\n--- 解答 ---\n' + body;
     }
-    return '以下は英検準1級ライティング「英文要約」の解答です（要約の元になった英文は、この会話ですでに出したものを参照してください）。\n' +
-      'この要約を英検準1級の採点基準（内容・構成・語彙・文法の4観点、各4点＝16点満点）で採点してください。' +
+    var hasSource = ctx.sourceText && ctx.sourceText.trim();
+    return '以下は英検準1級ライティング「英文要約」の解答です' +
+      (hasSource ? '。元の英文もあわせて貼ります' : '（要約の元になった英文は、この会話ですでに出したものを参照してください）') + '。\n' +
+      (hasSource ? '\n--- 元の英文 ---\n' + ctx.sourceText.trim() + '\n' : '') +
+      '\nこの要約を英検準1級の採点基準（内容・構成・語彙・文法の4観点、各4点＝16点満点）で採点してください。' +
       '各観点の点数、具体的な改善点トップ3、そして60〜70語の模範要約も教えてください。\n\n--- 解答 ---\n' + body;
   }
 
@@ -1053,19 +1093,27 @@
     var topHtml;
     if (isEssay) {
       topHtml =
-        '<div class="topic-en">' + escapeHtml(t.en) + '</div>' +
-        '<div class="points-row">' + t.points.map(function (p) { return '<span class="point-chip">' + escapeHtml(p) + '</span>'; }).join('') + '</div>' +
+        '<div class="topic-edit">' +
+          '<label class="field-label">TOPIC</label>' +
+          '<input type="text" class="topic-input" placeholder="TOPICを入力（教材から書き写す。空なら予定トピックを使用）">' +
+          '<label class="field-label">POINTS（4つ）</label>' +
+          '<div class="points-edit-grid">' +
+            [0, 1, 2, 3].map(function (i) { return '<input type="text" class="point-input" data-idx="' + i + '" placeholder="POINT ' + (i + 1) + '">'; }).join('') +
+          '</div>' +
+        '</div>' +
         '<div class="task-hint">POINTSは4つのうち2つを選び、言い換えて使う。序論で意見と理由を予告 → First → Second → In conclusion の4段落。</div>' +
         (entry.note ? '<div class="task-note">' + escapeHtml(entry.note) + '</div>' : '');
     } else {
       var summaryPrompt = '英検準1級ライティング対策として、本番形式の要約問題を1問出してください。約200語の英文（3段落構成：話題の導入→利点や賛成の動き→Howeverで転換して問題点や批判、の流れ）と、模範要約（60〜70語）を用意してください。';
       topHtml =
         '<div class="task-hint" style="margin-top:0;">約200語の英文を60〜70語に要約する。本文の語句はそのまま写さず、必ず自分の言葉に言い換える。</div>' +
+        '<label class="field-label" style="margin-top:10px;">元の英文（教材からここに貼り付け）</label>' +
+        '<textarea class="source-input" placeholder="要約対象の英文をここに貼り付ける…"></textarea>' +
+        '<div class="task-hint">↑ 教材がある日はここに貼り付ければOK（下のコピー用プロンプトは、教材が無い日にClaudeへ英文を出してもらう用）。</div>' +
         '<div class="prompt-box">' +
           '<div class="prompt-text">' + escapeHtml(summaryPrompt) + '</div>' +
           '<button class="copy-btn" type="button" data-copy="' + encodeURIComponent(summaryPrompt) + '">コピー</button>' +
-        '</div>' +
-        '<div class="task-hint">↑ まずこれをClaudeに貼って、今日の要約用の英文を出してもらう。</div>';
+        '</div>';
     }
 
     var scoreRowsHtml = CRITERIA.map(function (c) {
@@ -1129,6 +1177,42 @@
       }, 200);
     });
 
+    var topicInput = null, pointInputs = null, sourceInput = null;
+    if (isEssay) {
+      topicInput = card.querySelector('.topic-input');
+      topicInput.value = d.essayTopicEn || t.en;
+      pointInputs = card.querySelectorAll('.point-input');
+      Array.prototype.forEach.call(pointInputs, function (inp, i) {
+        inp.value = d.essayTopicPoints[i] || t.points[i] || '';
+      });
+      var topicSaveTimer = null;
+      function saveTopicFields() {
+        if (topicSaveTimer) clearTimeout(topicSaveTimer);
+        topicSaveTimer = setTimeout(function () {
+          var dd = getDay(entry.day);
+          dd.essayTopicEn = topicInput.value;
+          dd.essayTopicPoints = Array.prototype.map.call(pointInputs, function (inp) { return inp.value; });
+          dd.updatedAt = Date.now();
+          saveData(data);
+        }, 200);
+      }
+      topicInput.addEventListener('input', saveTopicFields);
+      Array.prototype.forEach.call(pointInputs, function (inp) { inp.addEventListener('input', saveTopicFields); });
+    } else {
+      sourceInput = card.querySelector('.source-input');
+      sourceInput.value = d.summarySource || '';
+      var sourceSaveTimer = null;
+      sourceInput.addEventListener('input', function () {
+        if (sourceSaveTimer) clearTimeout(sourceSaveTimer);
+        sourceSaveTimer = setTimeout(function () {
+          var dd = getDay(entry.day);
+          dd.summarySource = sourceInput.value;
+          dd.updatedAt = Date.now();
+          saveData(data);
+        }, 200);
+      });
+    }
+
     var fb = card.querySelector('.feedback-input');
     fb.value = d[cfg.nf] || '';
     var fbTimer = null;
@@ -1152,7 +1236,16 @@
         setTimeout(function () { copyBtn.textContent = cfg.copyLabel; }, 1600);
         return;
       }
-      copyText(buildGradingPrompt(kind, entry, body), copyBtn);
+      var ctx;
+      if (isEssay) {
+        ctx = {
+          topicEn: topicInput.value.trim(),
+          points: Array.prototype.map.call(pointInputs, function (inp) { return inp.value.trim(); }).filter(function (p) { return p; })
+        };
+      } else {
+        ctx = { sourceText: sourceInput.value };
+      }
+      copyText(buildGradingPrompt(kind, ctx, body), copyBtn);
     });
 
     var totalEl = card.querySelector('.grade-total');
@@ -1191,15 +1284,23 @@
     var lines = [];
     lines.push('英検準1級 ライティング記録 — Day ' + entry.day + '（' + fmtISO(entry.dateObj) + '）');
     lines.push('');
-    if (entry.topic) {
-      lines.push('■ 意見論述 TOPIC: ' + entry.topic.en);
-      lines.push('POINTS: ' + entry.topic.points.join(' / '));
+    var topicEn = (d.essayTopicEn && d.essayTopicEn.trim()) || (entry.topic ? entry.topic.en : '');
+    var topicPoints = (d.essayTopicPoints || []).filter(function (p) { return p; });
+    if (!topicPoints.length && entry.topic) topicPoints = entry.topic.points;
+    if (topicEn) {
+      lines.push('■ 意見論述 TOPIC: ' + topicEn);
+      lines.push('POINTS: ' + topicPoints.join(' / '));
     }
     lines.push('');
     lines.push('【意見論述】(' + countWords(d.essayText) + '語 / 点数' + (scoreSum(d.essayScores) === null ? '—' : scoreSum(d.essayScores)) + '/16)');
     lines.push(d.essayText || '(未記入)');
     lines.push('');
     if (d.essayNotes) { lines.push('― 添削メモ ―'); lines.push(d.essayNotes); lines.push(''); }
+    if (d.summarySource && d.summarySource.trim()) {
+      lines.push('■ 英文要約 元の英文:');
+      lines.push(d.summarySource.trim());
+      lines.push('');
+    }
     lines.push('【英文要約】(' + countWords(d.summaryText) + '語 / 点数' + (scoreSum(d.summaryScores) === null ? '—' : scoreSum(d.summaryScores)) + '/16)');
     lines.push(d.summaryText || '(未記入)');
     lines.push('');
@@ -1294,7 +1395,8 @@
     });
     items.forEach(function (it) {
       var planDay = plan[it.day - 1];
-      var topicEn = planDay && planDay.topic ? planDay.topic.en : (planDay && planDay.phase === 'review' ? '前日調整' : '—');
+      var topicEn = (it.d.essayTopicEn && it.d.essayTopicEn.trim()) ||
+        (planDay && planDay.topic ? planDay.topic.en : (planDay && planDay.phase === 'review' ? '前日調整' : '—'));
       var es = scoreSum(it.d.essayScores), ss = scoreSum(it.d.summaryScores);
       var div = document.createElement('div');
       div.className = 'history-item';
