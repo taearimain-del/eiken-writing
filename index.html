@@ -527,7 +527,7 @@
 <div class="wrap">
   <div class="eyebrow">EIKEN PRE-1 · WRITING TICKET</div>
   <h1 style="margin-top:4px;">英検準1級 一次試験 ライティング特訓</h1>
-  <div class="site-updated">サイト最終更新: 2026-07-30 09:22 JST</div>
+  <div class="site-updated">サイト最終更新: 2026-07-30 09:44 JST</div>
 
   <div class="ticket" id="ticket">
     <div class="ticket-stub">
@@ -1064,16 +1064,18 @@
       '\n\n--- 解答 ---\n' + body;
   }
 
-  function setupTimer(card, totalSec) {
+  function setupTimer(card, totalSec, mode) {
+    mode = mode || 'countdown';
+    var isStopwatch = mode === 'stopwatch';
     var disp = card.querySelector('.timer-display');
     var toggleBtn = card.querySelector('[data-timer="toggle"]');
     var resetBtn = card.querySelector('[data-timer="reset"]');
-    var remaining = totalSec;
+    var value = isStopwatch ? 0 : totalSec;
     var intervalId = null;
 
     function paint() {
-      disp.textContent = fmtClock(Math.max(0, remaining));
-      disp.classList.toggle('warn', remaining <= 60);
+      disp.textContent = fmtClock(Math.max(0, value));
+      disp.classList.toggle('warn', isStopwatch ? value >= totalSec : value <= 60);
     }
     function stop() {
       if (intervalId) {
@@ -1085,11 +1087,16 @@
     }
     toggleBtn.addEventListener('click', function () {
       if (intervalId) { stop(); toggleBtn.textContent = '再開'; return; }
-      if (remaining <= 0) remaining = totalSec;
+      if (!isStopwatch && value <= 0) value = totalSec;
       toggleBtn.textContent = '一時停止';
       intervalId = setInterval(function () {
-        remaining--;
-        if (remaining <= 0) { remaining = 0; paint(); stop(); toggleBtn.textContent = '時間切れ'; return; }
+        if (isStopwatch) {
+          value++;
+          paint();
+          return;
+        }
+        value--;
+        if (value <= 0) { value = 0; paint(); stop(); toggleBtn.textContent = '時間切れ'; return; }
         paint();
       }, 1000);
       activeTimers.push(intervalId);
@@ -1097,7 +1104,7 @@
     });
     resetBtn.addEventListener('click', function () {
       stop();
-      remaining = totalSec;
+      value = isStopwatch ? 0 : totalSec;
       toggleBtn.textContent = '開始';
       paint();
     });
@@ -1251,7 +1258,7 @@
       }, 200);
     });
 
-    setupTimer(card, cfg.sec);
+    setupTimer(card, cfg.sec, isEssay ? 'stopwatch' : 'countdown');
 
     var copyBtn = card.querySelector('[data-role="copywork"]');
     copyBtn.addEventListener('click', function () {
